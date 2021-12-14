@@ -1,0 +1,12 @@
+#+TITLE: Shapeless Blog
+
+The repo is in heavy development, and does not work at the moment.
+
+Shapeless blog is a minimalistic blog server intended for my personal
+use. It does only one thing, blogging in Emacs org mode.
+
+* Basic requirement
+- A web server for hosting your blog, e.g. a VPS server. Share host is
+  not enough.
+- Nginx for reverse proxy.
+- Emacs.
