@@ -1,12 +1,68 @@
-#+TITLE: Shapeless Blog
+#+TITLE: Emacs Shapeless Blog
 
-The repo is in heavy development, and does not work at the moment.
+This is the Emacs package for [[https://github.com/drshapeless/shapeless-blog][shapeless-blog]].
 
-Shapeless blog is a minimalistic blog server intended for my personal
-use. It does only one thing, blogging in Emacs org mode.
+* Prerequisites
+- emacs
+- curl
 
-* Basic requirement
-- A web server for hosting your blog, e.g. a VPS server. Share host is
-  not enough.
-- Nginx for reverse proxy.
-- Emacs.
+* Installation
+Assume that you have setup a shapeless-blog server and have a domain.
+
+Put ~shapeless-blog.el~ into your load path.
+#+begin_src emacs-lisp
+  (require 'shapeless-blog)
+#+end_src
+
+* Configuration
+You have to configure three things in order to get it to work.
+
+Here is an example.
+#+begin_src emacs-lisp
+  (setq slblog-username 'user)
+  (setq slblog-password 'pass)
+  (setq slblog-api-address "https://blog.drshapeless.com/api/v1/")
+#+end_src
+
+Storing password in your config is definitely not ideal, therefore I
+recommend using ~pass~.
+#+begin_src emacs-lisp
+  (require 'auth-source-pass)
+  (setq slblog-password (auth-source-pass-get 'secret "slblog/user"))
+#+end_src
+
+* Usage
+There are only four interactive function.
+
+After configuration, you need to update your token. =M-x= ~slblog-update-token~.
+
+Open a blank org file. =M-x= ~slblog-insert-new-blog-template~.
+#+begin_src org
+  ,#+TITLE:
+  ,#+DATE: nil
+  ,#+UPDATE: nil
+  ,#+CATEGORY:
+  ,#+ID: nil
+
+  # ## Blog post starts from here. ###
+#+end_src
+
+Insert the title, and optionally fill in the categories.
+
+If you want multiple categories, use comma to separate them.
+#+begin_src org
+  ,#+CATEGORY: emacs, github
+#+end_src
+
+After writing your blog post, =M-x= ~slblog-post~.
+
+~shapeless-blog.el~ will automatically fill in the DATE, UPDATE, ID.
+
+If you want to update an old post which already has an ID, you should
+still use ~slblog-post~, the UPDATE will change to present time. The
+package will automatically choose the correct method to call.
+
+For advance use, there is another method ~slblog-post-no-update~. This
+method can only be use in updating old blog post. The difference
+between ~slblog-post-no-update~ and ~slblog-post~ is that
+~slblog-post-no-update~ will not update the UPDATE to current time.

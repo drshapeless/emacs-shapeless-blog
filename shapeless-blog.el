@@ -9,32 +9,27 @@
 ;;; Code:
 
 (require 'ox-shapelesshtml)
-(require 'request)
 
 ;; Early version of shapeless-blog only support pre-generated tokens.
-
-;; (defvar slblog-authentication-address nil
-;;   "The address for slblog authentication.")
 
 (defcustom slblog-api-address nil
   "The api address for blog posting."
   :type 'string)
 
-;; (defvar slblog-user nil
-;;   "The user name of slblog.")
+(defvar slblog-username nil
+  "The user name of slblog.")
 
-;; (defvar slblog-password nil
-;;   "The user password of slblog.")
+(defvar slblog-password nil
+  "The user password of slblog.")
 
 (defcustom slblog-token nil
   "The authentication token of slblog.
 nil by default."
   :type 'string)
 
-;; (defvar slblog-expire-time nil
-;;   "The expire date of token.")
-
-
+(defcustom slblog-export-backend 'shapelesshtml
+  "The export backend of blog content."
+  :type 'string)
 
 ;; From https://stackoverflow.com/questions/66574715/how-to-get-org-mode-file-title-and-other-file-level-properties-from-an-arbitra.
 (defun slblog--org-get-value-of-key (DATA KEY)
@@ -73,19 +68,33 @@ e.g. TITLE, CATEGORY"
                                 KEY))
 
 (defun slblog--org-current-buffer-get-category ()
-  (slblog--org-current-buffer-get-value-of-key "CATEGORY"))
+  "Return a list of string of the '#+CATEGORY:' field.
+
+CATEGORY should originally be a csv string."
+  ;; From csv to list.
+  (mapcar 's-trim
+          (split-string (slblog--org-current-buffer-get-value-of-key "CATEGORY")
+                        ",")))
 
 (defun slblog--org-current-buffer-get-title ()
+  "Return a string of the '#+TITLE:' field."
   (slblog--org-current-buffer-get-value-of-key "TITLE"))
 
 (defun slblog--org-current-buffer-get-date ()
+  "Return a string of the '#+DATE:' field."
   (slblog--org-current-buffer-get-value-of-key "DATE"))
+
+(defun slblog--org-current-buffer-get-update ()
+  "Return a string of the '#+UPDATE:' field."
+  (slblog--org-current-buffer-get-value-of-key "UPDATE"))
 
 (defun slblog--org-current-buffer-get-id ()
   (slblog--org-current-buffer-get-value-of-key "ID"))
 
 (defun slblog--html-body-content ()
-  (org-export-as 'shapelesshtml nil nil t))
+  "Return a string of the body content in HTML using
+'slblog-export-backend'."
+  (org-export-as slblog-export-backend nil nil t))
 
 (defun slblog--remove-timestamp-bracket (TIMESTAMP)
   "Remove the brackets of TIMESTAMP.
@@ -93,7 +102,14 @@ e.g. TITLE, CATEGORY"
 Return a TIMESTAMP string without brackets.
 
 TIMESTAMP is a string."
-  (replace-regexp-in-string "[]\[<>]" TIMESTAMP))
+  (replace-regexp-in-string "[]\[<>]" "" TIMESTAMP))
+
+(defun slblog--update-date (TIMESTAMP)
+  "Update the #+DATE: in org to TIMESTAMP
+
+TIMESTAMP is a string."
+  (replace-regexp "#\\+DATE:.*" (concat "#+DATE: " TIMESTAMP)
+                  nil (point-min) (point-max)))
 
 (defun slblog--update-time (TIMESTAMP)
   "Update the #+UPDATE: in org to TIMESTAMP.
@@ -106,18 +122,8 @@ TIMESTAMP is a string."
   "Update the #+ID: in org to ID.
 
 ID is a string."
-  (replace-regexp "#\\+ID:.*" (concat "#+ID: " ID)
+  (replace-regexp "#\\+ID:.*" (concat "#+ID: " (number-to-string ID))
                   nil (point-min) (point-max)))
-
-(defun slblog--current-buffer-json-string ()
-  (json-encode (list (cons "title" (slblog--org-current-buffer-get-title))
-                     (cons "created_at" (slblog--remove-timestamp-bracket
-                                         (slblog--org-current-buffer-get-date)))
-                     (cons "last_update" ())
-                     (cons "category" (slblog--org-current-buffer-get-category))
-                     (cons "body" (slblog--html-body-content))
-                     (cons "token" slblog-token)
-                     )))
 
 (defun slblog--new-post-object (UPDATE)
   "Return a list of objects of the new post.
@@ -125,64 +131,167 @@ ID is a string."
 UPDATE is a timestamp string.
 Note that it does not have an id."
   (list (cons "title" (slblog--org-current-buffer-get-title))
-        (cons "created_at" (slblog--remove-timestamp-bracket
-                            (slblog--org-current-buffer-get-date)))
-        (cons "last_update" (slblog--remove-timestamp-bracket
-                             UPDATE))
+        (cons "created" (slblog--remove-timestamp-bracket
+                         UPDATE))
+        (cons "updated" (slblog--remove-timestamp-bracket
+                         UPDATE))
         (cons "category" (slblog--org-current-buffer-get-category))
-        (cons "body" (slblog--html-body-content))
-        (cons "token" slblog-token)))
+        (cons "content" (slblog--html-body-content))))
+
+(defun slblog--old-post-object (UPDATE)
+  "Return a list of objects for modifying an old post.
+
+UPDATE is a timestamp string."
+  (list (cons "id" (string-to-number (slblog--org-current-buffer-get-id)))
+        (cons "title" (slblog--org-current-buffer-get-title))
+        (cons "created" (slblog--remove-timestamp-bracket
+                         (slblog--org-current-buffer-get-date)))
+        (cons "updated" (slblog--remove-timestamp-bracket
+                         UPDATE))
+        (cons "category" (slblog--org-current-buffer-get-category))
+        (cons "content" (slblog--html-body-content))))
+
+(defun slblog--old-post-object-no-change ()
+  "Return a list of objects for an old post."
+  (list (cons "id" (string-to-number (slblog--org-current-buffer-get-id)))
+        (cons "title" (slblog--org-current-buffer-get-title))
+        (cons "created" (slblog--remove-timestamp-bracket
+                         (slblog--org-current-buffer-get-date)))
+        (cons "updated" (slblog--remove-timestamp-bracket
+                         (slblog--org-current-buffer-get-update)))
+        (cons "category" (slblog--org-current-buffer-get-category))
+        (cons "content" (slblog--html-body-content))))
 
 (defun slblog-post ()
-  "JSON-STRING is a string of request json."
+  "Push the current buffer to the server, change the update time to now.
+
+If 'id' is nil, create a new post.
+Update the ID and UPDATE fields in current buffer.
+
+If 'id' is non-nil, patch an old post.
+Update the UPDATE field in current buffer."
+  (interactive)
+  (let ((id (slblog--org-current-buffer-get-id))
+        (current-time (format-time-string "[%Y-%m-%d %H:%M]")))
+    (if (string= id "nil")
+        (let ((response (slblog--create-post-request current-time)))
+          (if (string= (caar response)
+                       "id")
+              (progn
+                (slblog--update-time current-time)
+                (slblog--update-date current-time)
+                (slblog--update-id (cdar response))
+                (save-buffer)
+                (message (format "created blog post %d" (cdar response))))
+            (message (cdar response))))
+
+      (let ((response (slblog--update-post-request id current-time)))
+        (if (string= (caar response)
+                     "id")
+            (progn
+              (slblog--update-time current-time)
+              (save-buffer)
+              (message "update success"))
+          (message (cdar response)))))))
+
+(defun slblog-post-no-change ()
+  "Push the current buffer to the server, but do not change current buffer.
+
+Can only be used in old post with a non-nil 'ID'."
+
+  (interactive)
   (let ((id (slblog--org-current-buffer-get-id)))
     (if (string= id "nil")
-        (message "new post")
-      (message "old post")))
-  )
+        (message "current buffer has no ID")
+      (let ((response (slblog--update-post-request-no-change id)))
+        (if (string= (caar response)
+                     "id")
+            (message "update success")
+          (message (cdar response)))))))
 
-(defun slblog--new-post-request (UPDATE)
+(defun slblog--post-address ()
+  "The address of post CRUD."
+  (concat slblog-api-address "post/"))
+
+;; Forget about request.el
+;; That adds a lot of complexity.
+(defun slblog--create-post-request (UPDATE)
   "Make a POST request to the api server.
 
 UPDATE is a timestamp string."
-  (request-response-data
-   (request slblog-api-address
-     :sync t
-     ;; Timeout is necessary.
-     :timeout 2
-     :type "POST"
-     :parser 'json-read
-     :data (json-encode (slblog--new-post-object UPDATE)))))
+  (json-read-from-string
+   (shell-command-to-string
+    (format "curl -s -H 'Authorization: Bearer %s' -d %s %s"
+            slblog-token
+            (shell-quote-argument (json-encode (slblog--new-post-object UPDATE)))
+            (slblog--post-address)))))
 
-(defvar slblog--template-string
-  "#+TITLE: %s
-#+DATE: %s
-#+CATEGORY: %s
-#+ID: %d
+(defun slblog--update-post-request (ID UPDATE)
+  "Make a PATCH request to the api server.
 
-%s")
+ID is a string of post id.
+UPDATE is a timestamp string."
+  (json-read-from-string
+   (shell-command-to-string
+    (format "curl -s -H 'Authorization: Bearer %s' -X PATCH -d %s %s"
+            slblog-token
+            (shell-quote-argument (json-encode (slblog--old-post-object UPDATE)))
+            (concat (slblog--post-address) ID)))))
 
-;; (defun slblog--update-token (token)
-;;   "Token is a string return by the server."
-;;   (setq slblog-token token))
+(defun slblog--update-post-request-no-change (ID)
+  "Make a PATCH request to the api server.
 
-;; (defun slblog--update-expire (time)
-;;   (setq slblog-expire-time time))
+ID is a string of post id."
+  (json-read-from-string
+   (shell-command-to-string
+    (format "curl -s -H 'Authorization: Bearer %s' -X PATCH -d %s %s"
+            slblog-token
+            (shell-quote-argument (json-encode (slblog--old-post-object-no-change)))
+            (concat (slblog--post-address) ID)))))
 
-;; (defun slblog-authenticate ()
-;;   (let ((data (request-response-data
-;;                (request slblog-authentication-address
-;;                  :sync t
-;;                  :timeout 2
-;;                  :parser 'json-read
-;;                  :data (json-encode (list (cons "user"
-;;                                                 slblog-user)
-;;                                           (cons "password"
-;;                                                 slblog-password)))))))
-;;     (if (string= (caar data) 'error)
-;;         (message "slblog authentication failed: %S" (cdar data))
-;;       (progn
-;;         (slblog--update-token (cdr (assoc 'token (car data))))))))
+(defun slblog--authentication-address ()
+  "The address for authentication."
+  (concat slblog-api-address "authentication/"))
+
+(defun slblog--get-token-request ()
+  "Update 'slblog-token'.
+
+Use 'slblog-username' and 'slblog-password' to authenticate."
+  (json-read-from-string
+   (shell-command-to-string
+    (format "curl -s -d %s %s"
+            (shell-quote-argument (json-encode (list (cons "username" slblog-username)
+                                                     (cons "password" slblog-password))))
+            (slblog--authentication-address)))))
+
+(defun slblog-update-token ()
+  "Update 'slblog-token'."
+  (interactive)
+  (let ((response (slblog--get-token-request)))
+    (if (string= (caar response)
+                 "token")
+        (progn
+          (setq slblog-token (cdar response))
+          (message "token updated"))
+      (message (cdar response)))))
+
+(defcustom slblog--new-blog-template
+     "#+TITLE:
+#+DATE: nil
+#+UPDATE: nil
+#+CATEGORY:
+#+ID: nil
+
+# ## Blog post starts from here. ###
+
+"
+     "slblog template string."
+     :type 'string)
+
+(defun slblog-insert-new-blog-template ()
+  "Insert a new blog template to current buffer."
+  (interactive)
+  (insert slblog--new-blog-template))
 
 (provide 'shapeless-blog)
 ;;; shapeless-blog.el ends here
