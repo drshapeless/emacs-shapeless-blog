@@ -1,11 +1,8 @@
-#+TITLE: Demo
-#+DATE: [2021-12-14 21:47]
-#+UPDATE: [2021-12-26 00:11]
-#+CATEGORY: Emacs
-#+ID: 14
-
-
-# ## Blog post starts from here. ###
+#+title: Demo
+#+filetags: :emacs:test:dummy:
+#+date: [2022-03-08 09:41]
+#+update: [2022-03-08 09:41]
+#+id: 6
 
 * First title
 Some random content.

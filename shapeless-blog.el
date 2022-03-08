@@ -1,297 +1,303 @@
-;;; shapeless-blog.el --- Minimalistic blogging with org mode. -*- lexical-binding: t -*-
+;;; shapeless-blog.el --- Emacs interface for shapeless-blog -*- lexical-binding: t -*-
 
 ;;; Commentary:
 
-;; Shapeless Blog is a minimalistic blogging package in Emacs. It
-;; works with a shapeless-blog server. Aim at providing a simple and
-;; minimal blogging experience with Emacs.
+;; A personal blogging tool in Emacs.
 
 ;;; Code:
 
-(require 'ox-shapelesshtml)
-
-;; Early version of shapeless-blog only support pre-generated tokens.
-
-(defcustom slblog-api-address nil
-  "The api address for blog posting."
+(defcustom shapeless-blog-default-directory
+  (concat (getenv "HOME") "/shapeless-blog/")
+  "Default directory of shapeless-blog data."
   :type 'string)
 
-(defvar slblog-username nil
-  "The user name of slblog.")
-
-(defvar slblog-password nil
-  "The user password of slblog.")
-
-(defcustom slblog-token nil
-  "The authentication token of slblog.
-nil by default."
+(defcustom shapeless-blog-database-path
+  (concat shapeless-blog-default-directory "shapeless-blog.db")
+  "Path to shapeless-blog sqlite database."
   :type 'string)
 
-(defcustom slblog-export-backend 'shapelesshtml
+(defcustom shapeless-blog-export-backend 'shapelesshtml
   "The export backend of blog content."
   :type 'string)
 
-;; From https://stackoverflow.com/questions/66574715/how-to-get-org-mode-file-title-and-other-file-level-properties-from-an-arbitra.
-(defun slblog--org-get-value-of-key (DATA KEY)
-  "Return the value associated with the KEY.
-DATA is a string from `org-element-parse-buffer'
-KEY is a string of the name of org element."
-  (nth 1
-       (assoc KEY
-              (org-element-map DATA
-                  '(keyword)
-                (lambda (kwd)
-                  (let ((x (cadr kwd)))
-                    (list (plist-get x :key)
-                          (plist-get x :value))))))))
+(defcustom shapeless-blog-remote-path ""
+  "The remote path of shapeless-blog database."
+  :type 'string)
 
-(defun slblog--org-parse-greater-element-from-path (PATH)
-  "Return a string containing org-data.
-PATH is a string of file path."
-  (with-temp-buffer
-    (insert-file-contents PATH)
-    (org-mode)
-    (org-element-parse-buffer 'greater-element)))
+(defun shapeless-blog-migrate (&optional PATH)
+  "Migrate the sqlite database at PATH.
 
-(defun slblog--org-get-value-of-key-from-path (PATH KEY)
-  "Return the value associated with the KEY.
-PATH is a string of file path.
-KEY is a string of the name of org element."
-  (slblog--org-get-value-of-key (slblog--org-parse-greater-element-from-path PATH)
-                                KEY))
+PATH is a string to the database location.
 
-(defun slblog--org-current-buffer-get-value-of-key (KEY)
-  "Return the value of key from the current org buffer.
-KEY is a string of a org element name.
-e.g. TITLE, CATEGORY"
-  (slblog--org-get-value-of-key (org-element-parse-buffer 'greater-element)
-                                KEY))
+If PATH is nil, use `shapeless-blog-database-path' as default."
+  (interactive)
+  (let ((sql (sqlite-open (if (null PATH)
+                              shapeless-blog-database-path
+                            PATH))))
+    (sqlite-execute
+     sql
+     "CREATE TABLE IF NOT EXISTS posts(
+          id INTEGER PRIMARY KEY,
+          title TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          created TEXT NOT NULL,
+          updated TEXT NOT NULL
+      );"
+     )
+    (sqlite-execute
+     sql
+     "CREATE TABLE IF NOT EXISTS tags(
+          post_id INTEGER NOT NULL,
+          tag TEXT
+      );"
+     )))
 
-(defun slblog--org-current-buffer-get-category ()
-  "Return a list of string of the '#+CATEGORY:' field.
+(defun shapeless-blog-destroy-tables (&optional PATH)
+  "Drop all the tables in the database at PATH.
 
-CATEGORY should originally be a csv string."
-  ;; From csv to list.
-  (mapcar 's-trim
-          (split-string (slblog--org-current-buffer-get-value-of-key "CATEGORY")
-                        ",")))
+PATH is a string to the database location.
 
-(defun slblog--org-current-buffer-get-title ()
-  "Return a string of the '#+TITLE:' field."
-  (slblog--org-current-buffer-get-value-of-key "TITLE"))
+If PATH is nil, use `shapeless-blog-database-path' as default."
+  (interactive)
+  (let ((sql (sqlite-open (if (null PATH)
+                              shapeless-blog-database-path
+                            PATH))))
+    (sqlite-execute
+     sql
+     "DROP TABLE IF EXISTS posts;")
+    (sqlite-execute
+     sql
+     "DROP TABLE IF EXISTS tags;")))
 
-(defun slblog--org-current-buffer-get-date ()
-  "Return a string of the '#+DATE:' field."
-  (slblog--org-current-buffer-get-value-of-key "DATE"))
+(defun shapeless-blog-reset-database ()
+  "Reset database."
+  (interactive)
+  (shapeless-blog-destroy-tables)
+  (shapeless-blog-migrate))
 
-(defun slblog--org-current-buffer-get-update ()
-  "Return a string of the '#+UPDATE:' field."
-  (slblog--org-current-buffer-get-value-of-key "UPDATE"))
+(defun shapeless-blog--get-tags ()
+  "Get tags for the current post.
 
-(defun slblog--org-current-buffer-get-id ()
-  (slblog--org-current-buffer-get-value-of-key "ID"))
+Return an alist of tag string."
+  (split-string (cadr (assoc "FILETAGS"
+                             (org-collect-keywords '("filetags"))))
+                ":" 'omit-nulls))
 
-(defun slblog--html-body-content ()
-  "Return a string of the body content in HTML using
-'slblog-export-backend'."
-  (org-export-as slblog-export-backend nil nil t))
+(defun shapeless-blog--get-title ()
+  "Get title for the current post.
 
-(defun slblog--remove-timestamp-bracket (TIMESTAMP)
-  "Remove the brackets of TIMESTAMP.
+Return a string."
+  (cadr (assoc "TITLE"
+               (org-collect-keywords '("title")))))
 
-Return a TIMESTAMP string without brackets.
+(defun shapeless-blog--get-create-date ()
+  "Get create date for the current post.
 
-TIMESTAMP is a string."
-  (replace-regexp-in-string "[]\[<>]" "" TIMESTAMP))
+Return a string."
+  (replace-regexp-in-string "[]\[<>]" ""
+                            (cadr (assoc "DATE"
+                                         (org-collect-keywords '("date"))))))
 
-(defun slblog--update-date (TIMESTAMP)
-  "Update the #+DATE: in org to TIMESTAMP
+(defun shapeless-blog--get-update-date ()
+  "Get update date for the current post.
 
-TIMESTAMP is a string."
-  (replace-regexp "#\\+DATE:.*" (concat "#+DATE: " TIMESTAMP)
+Return a string."
+  (replace-regexp-in-string "[]\[<>]" ""
+                            (cadr (assoc "UPDATE"
+                                         (org-collect-keywords '("update"))))))
+
+(defun shapeless-blog--get-filename ()
+  "Get filename for the current post.
+
+Return a string.
+
+This does not mean the actual filename, but a filename for the
+shapeless-blog database."
+  (s-replace " " "_" (s-downcase (shapeless-blog--get-title))))
+
+(defun shapeless-blog--get-id ()
+  "Get id of the current post.
+
+Return an integer."
+  (let ((id-string (cadr (assoc "ID"
+                                (org-collect-keywords '("id"))))))
+    (if (string-empty-p id-string)
+        nil
+      (string-to-number id-string))))
+
+(defun shapeless-blog--edit-id (ID)
+  "Edit the #+id: into ID.
+
+ID is a integer."
+  (replace-regexp "#\\+id:.*" (concat "#+id: " (number-to-string ID))
                   nil (point-min) (point-max)))
 
-(defun slblog--update-time (TIMESTAMP)
-  "Update the #+UPDATE: in org to TIMESTAMP.
+(defun shapeless-blog--edit-update-date (DATE)
+  "Edit the #+update: into DATE.
 
-TIMESTAMP is a string."
-  (replace-regexp "#\\+UPDATE:.*" (concat "#+UPDATE: " TIMESTAMP)
+DATE is a string."
+  (replace-regexp "#\\+update:.*" (format "#+update: [%s]" DATE)
                   nil (point-min) (point-max)))
 
-(defun slblog--update-id (ID)
-  "Update the #+ID: in org to ID.
+(defun shapeless-blog--edit-create-date (DATE)
+  "Edit the #+date: into DATE.
 
-ID is a string."
-  (replace-regexp "#\\+ID:.*" (concat "#+ID: " (number-to-string ID))
+DATE is a string."
+  (replace-regexp "#\\+date:.*" (format "#+date: [%s]" DATE)
                   nil (point-min) (point-max)))
 
-(defun slblog--new-post-object (UPDATE)
-  "Return a list of objects of the new post.
+(defun shapeless-blog--title-to-filename (TITLE)
+  "Convert title into filename."
+  (s-replace " " "_" (s-downcase TITLE)))
 
-UPDATE is a timestamp string.
-Note that it does not have an id."
-  (list (cons "title" (slblog--org-current-buffer-get-title))
-        (cons "created" (slblog--remove-timestamp-bracket
-                         UPDATE))
-        (cons "updated" (slblog--remove-timestamp-bracket
-                         UPDATE))
-        (cons "category" (slblog--org-current-buffer-get-category))
-        (cons "content" (slblog--html-body-content))))
+(defun shapeless-blog--db-insert-tag1 (SQL ID TAG)
+  (sqlite-execute SQL
+                  "INSERT INTO tags(post_id, tag) VALUES (?, ?);"
+                  (list ID TAG)))
 
-(defun slblog--old-post-object (UPDATE)
-  "Return a list of objects for modifying an old post.
+(defun shapeless-blog--db-insert-tags (SQL ID TAGS)
+  "Add tags of TAGS to post of ID."
+  (mapcar (lambda (tag) (shapeless-blog--db-insert-tag1 SQL ID tag))
+          TAGS))
 
-UPDATE is a timestamp string."
-  (list (cons "id" (string-to-number (slblog--org-current-buffer-get-id)))
-        (cons "title" (slblog--org-current-buffer-get-title))
-        (cons "created" (slblog--remove-timestamp-bracket
-                         (slblog--org-current-buffer-get-date)))
-        (cons "updated" (slblog--remove-timestamp-bracket
-                         UPDATE))
-        (cons "category" (slblog--org-current-buffer-get-category))
-        (cons "content" (slblog--html-body-content))))
+(defun shapeless-blog--db-insert-post (SQL TITLE FILENAME CREATED UPDATED)
+  "Insert a new post into database.
 
-(defun slblog--old-post-object-no-change ()
-  "Return a list of objects for an old post."
-  (list (cons "id" (string-to-number (slblog--org-current-buffer-get-id)))
-        (cons "title" (slblog--org-current-buffer-get-title))
-        (cons "created" (slblog--remove-timestamp-bracket
-                         (slblog--org-current-buffer-get-date)))
-        (cons "updated" (slblog--remove-timestamp-bracket
-                         (slblog--org-current-buffer-get-update)))
-        (cons "category" (slblog--org-current-buffer-get-category))
-        (cons "content" (slblog--html-body-content))))
+Returning the id."
+  (caar (sqlite-select
+         SQL
+         "INSERT INTO posts(title, filename, created, updated) VALUES (?, ?, ?, ?) RETURNING id;"
+         (list TITLE
+               FILENAME
+               CREATED
+               UPDATED))))
 
-(defun slblog-post ()
-  "Push the current buffer to the server, change the update time to now.
+(defun shapeless-blog--db-insert-old-post (SQL ID TITLE FILENAME CREATED UPDATED)
+  "Insert an old post into database.
 
-If 'id' is nil, create a new post.
-Update the ID and UPDATE fields in current buffer.
+The difference between this and `shapeless-blog--db-insert-post'
+is this function requires an explicit id number, while the other
+one generate one."
+  (sqlite-execute
+   SQL
+   "INSERT INTO posts(id, title, filename, created, updated) VALUES(?,?,?,?,?);"
+   (list ID TITLE FILENAME CREATED UPDATED)))
 
-If 'id' is non-nil, patch an old post.
-Update the UPDATE field in current buffer."
+(defun shapeless-blog--db-update-post (SQL ID TITLE FILENAME CREATED UPDATED)
+  "Update an old post in the database."
+  (sqlite-execute SQL
+                  "UPDATE posts
+SET title = ?, filename = ?, created = ?, updated = ?
+WHERE id = ?"
+                  (list TITLE FILENAME CREATED UPDATED ID)))
+
+(defun shapeless-blog--db-delete-post (SQL ID)
+  "Delete post of ID from the database."
+  (sqlite-execute SQL
+                  "DELETE FROM posts WHERE id = ?;"
+                  (list ID)))
+
+(defun shapeless-blog--db-delete-all-tags (SQL ID)
+  "Delete tags with post_id ID from the database."
+  (sqlite-execute SQL
+                  "DELETE FROM tags WHERE post_id = ?;"
+                  (list ID)))
+
+(defun shapeless-blog--export-to-file (FILENAME)
+  "Export the current buffer into FILENAME in the database."
+  (org-export-to-file shapeless-blog-export-backend
+      (concat shapeless-blog-default-directory
+              (format "/posts/%s.html" FILENAME))
+    t nil nil t))
+
+(defun shapeless-blog--create-new-post ()
+  "Create a new post."
+  (let* ((sql (sqlite-open shapeless-blog-database-path))
+         (now (format-time-string "%Y-%m-%d %H:%M"))
+         (title (shapeless-blog--get-title))
+         (filename (shapeless-blog--title-to-filename title))
+         (tags (shapeless-blog--get-tags))
+         (id (shapeless-blog--db-insert-post sql title filename now now)))
+    (shapeless-blog--edit-id id)
+    (shapeless-blog--edit-create-date now)
+    (shapeless-blog--edit-update-date now)
+    (shapeless-blog--db-insert-tags sql id tags)
+    (shapeless-blog--export-to-file filename)
+    ))
+
+(defun shapeless-blog--update-old-post ()
+  "Update an old post."
+  (let* ((sql (sqlite-open shapeless-blog-database-path))
+         (created (shapeless-blog--get-create-date))
+         (now (format-time-string "%Y-%m-%d %H:%M"))
+         (title (shapeless-blog--get-title))
+         (filename (shapeless-blog--title-to-filename title))
+         (id (shapeless-blog--get-id))
+         (tags (shapeless-blog--get-tags)))
+    (shapeless-blog--edit-update-date now)
+    (shapeless-blog--db-delete-all-tags sql id)
+    (shapeless-blog--db-update-post sql id title filename created now)
+    (shapeless-blog--db-insert-tags sql id tags)
+    ;; In some rare cases of editing the title will result in a
+    ;; redundant html file in the database. Manual deletion is
+    ;; required.
+    (shapeless-blog--export-to-file filename)
+    ))
+
+(defun shapeless-blog-create-old-post ()
+  "Create an old post."
   (interactive)
-  (let ((id (slblog--org-current-buffer-get-id))
-        (current-time (format-time-string "[%Y-%m-%d %H:%M]")))
-    (if (string= id "nil")
-        (let ((response (slblog--create-post-request current-time)))
-          (if (string= (caar response)
-                       "id")
-              (progn
-                (slblog--update-time current-time)
-                (slblog--update-date current-time)
-                (slblog--update-id (cdar response))
-                (save-buffer)
-                (message (format "created blog post %d" (cdar response))))
-            (message (cdar response))))
+  (let* ((sql (sqlite-open shapeless-blog-database-path))
+         (created (shapeless-blog--get-create-date))
+         (updated (shapeless-blog--get-update-date))
+         (title (shapeless-blog--get-title))
+         (filename (shapeless-blog--title-to-filename title))
+         (id (shapeless-blog--get-id))
+         (tags (shapeless-blog--get-tags)))
+    (shapeless-blog--db-delete-all-tags sql id)
+    (shapeless-blog--db-insert-old-post sql id title filename created updated)
+    (shapeless-blog--db-insert-tags sql id tags)
+    ;; In some rare cases of editing the title will result in a
+    ;; redundant html file in the database. Manual deletion is
+    ;; required.
+    (shapeless-blog--export-to-file filename)
+    ))
 
-      (let ((response (slblog--update-post-request id current-time)))
-        (if (string= (caar response)
-                     "id")
-            (progn
-              (slblog--update-time current-time)
-              (save-buffer)
-              (message "update success"))
-          (message (cdar response)))))))
-
-(defun slblog-post-no-change ()
-  "Push the current buffer to the server, but do not change current buffer.
-
-Can only be used in old post with a non-nil 'ID'."
-
+(defun shapeless-blog-modify-old-post ()
+  "Modify an old post without changing the updated time."
   (interactive)
-  (let ((id (slblog--org-current-buffer-get-id)))
-    (if (string= id "nil")
-        (message "current buffer has no ID")
-      (let ((response (slblog--update-post-request-no-change id)))
-        (if (string= (caar response)
-                     "id")
-            (message "update success")
-          (message (cdar response)))))))
+  (let* ((sql (sqlite-open shapeless-blog-database-path))
+         (created (shapeless-blog--get-create-date))
+         (updated (shapeless-blog--get-update-date))
+         (title (shapeless-blog--get-title))
+         (filename (shapeless-blog--title-to-filename title))
+         (id (shapeless-blog--get-id))
+         (tags (shapeless-blog--get-tags)))
+    (shapeless-blog--db-delete-all-tags sql id)
+    (shapeless-blog--db-update-post sql id title filename created updated)
+    (shapeless-blog--db-insert-tags sql id tags)
+    ;; In some rare cases of editing the title will result in a
+    ;; redundant html file in the database. Manual deletion is
+    ;; required.
+    (shapeless-blog--export-to-file filename)
+    ))
 
-(defun slblog--post-address ()
-  "The address of post CRUD."
-  (concat slblog-api-address "post/"))
+(defun shapeless-blog-create-or-update-post ()
+  "Create or update the current buffer.
 
-;; Forget about request.el
-;; That adds a lot of complexity.
-(defun slblog--create-post-request (UPDATE)
-  "Make a POST request to the api server.
-
-UPDATE is a timestamp string."
-  (json-read-from-string
-   (shell-command-to-string
-    (format "curl -s -H 'Authorization: Bearer %s' -d %s %s"
-            slblog-token
-            (shell-quote-argument (json-encode (slblog--new-post-object UPDATE)))
-            (slblog--post-address)))))
-
-(defun slblog--update-post-request (ID UPDATE)
-  "Make a PATCH request to the api server.
-
-ID is a string of post id.
-UPDATE is a timestamp string."
-  (json-read-from-string
-   (shell-command-to-string
-    (format "curl -s -H 'Authorization: Bearer %s' -X PATCH -d %s %s"
-            slblog-token
-            (shell-quote-argument (json-encode (slblog--old-post-object UPDATE)))
-            (concat (slblog--post-address) ID)))))
-
-(defun slblog--update-post-request-no-change (ID)
-  "Make a PATCH request to the api server.
-
-ID is a string of post id."
-  (json-read-from-string
-   (shell-command-to-string
-    (format "curl -s -H 'Authorization: Bearer %s' -X PATCH -d %s %s"
-            slblog-token
-            (shell-quote-argument (json-encode (slblog--old-post-object-no-change)))
-            (concat (slblog--post-address) ID)))))
-
-(defun slblog--authentication-address ()
-  "The address for authentication."
-  (concat slblog-api-address "authentication/"))
-
-(defun slblog--get-token-request ()
-  "Update 'slblog-token'.
-
-Use 'slblog-username' and 'slblog-password' to authenticate."
-  (json-read-from-string
-   (shell-command-to-string
-    (format "curl -s -d %s %s"
-            (shell-quote-argument (json-encode (list (cons "username" slblog-username)
-                                                     (cons "password" slblog-password))))
-            (slblog--authentication-address)))))
-
-(defun slblog-update-token ()
-  "Update 'slblog-token'."
+If #+id: is empty, create a new post, otherwise update the post."
   (interactive)
-  (let ((response (slblog--get-token-request)))
-    (if (string= (caar response)
-                 "token")
-        (progn
-          (setq slblog-token (cdar response))
-          (message "token updated"))
-      (message (cdar response)))))
+  (if (null (shapeless-blog--get-id))
+      (shapeless-blog--create-new-post)
+    (shapeless-blog--update-old-post)))
 
-(defcustom slblog--new-blog-template
-     "#+TITLE:
-#+DATE: nil
-#+UPDATE: nil
-#+CATEGORY:
-#+ID: nil
-
-# ## Blog post starts from here. ###
-
-"
-     "slblog template string."
-     :type 'string)
-
-(defun slblog-insert-new-blog-template ()
-  "Insert a new blog template to current buffer."
+(defun shapeless-blog-sync ()
+  "Sync with the remote path using 'rsync'."
   (interactive)
-  (insert slblog--new-blog-template))
+  (async-shell-command (format "rsync -urv --delete-after %s %s"
+                               shapeless-blog-default-directory
+                               shapeless-blog-remote-path)
+                       "*shapeless-blog-rsync*"))
 
 (provide 'shapeless-blog)
 ;;; shapeless-blog.el ends here
