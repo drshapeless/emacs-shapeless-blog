@@ -6,6 +6,9 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+(require 'request)
+
 (defcustom shapeless-blog-api-url "http://localhost:9398/api"
   "Api url to shapeless-blog server."
   :type 'string)
@@ -31,11 +34,12 @@
   (interactive)
   (request (concat shapeless-blog-api-url "/healthcheck")
     :type "GET"
+    :parser 'json-read
     :complete (cl-function
                (lambda (&key response &allow-other-keys)
                  (if (eq (request-response-status-code response) 200)
-                     (message (request-response-data response))
-                   (error (request-response-data response)))))))
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response)))))))
 
 (defun shapeless-blog-update-token ()
   "Update shapeless-blog token."
