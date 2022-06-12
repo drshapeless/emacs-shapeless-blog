@@ -3,7 +3,7 @@
 This is the Emacs package for [[https://github.com/drshapeless/shapeless-blog][shapeless-blog]].
 
 * Prerequisites
-- emacs
+- emacs(only for version > 28)
 - rsync
 - sqlite3
 

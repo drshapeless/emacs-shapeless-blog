@@ -1,4 +1,4 @@
-;;; shapeless-blog.el --- Emacs interface for shapeless-blog -*- lexical-binding: t -*-
+;;; shapeless-blog-new.el --- Emacs interface for shapeless-blog -*- lexical-binding: t -*-
 
 ;;; Commentary:
 
@@ -6,74 +6,122 @@
 
 ;;; Code:
 
-(defcustom shapeless-blog-default-directory
-  (concat (getenv "HOME") "/shapeless-blog/")
-  "Default directory of shapeless-blog data."
+(defcustom shapeless-blog-api-url "http://localhost:9398/api"
+  "Api url to shapeless-blog server."
   :type 'string)
 
-(defcustom shapeless-blog-database-path
-  (concat shapeless-blog-default-directory "shapeless-blog.db")
-  "Path to shapeless-blog sqlite database."
+(defcustom shapeless-blog-token ""
+  "The bearer token for authentication."
+  :type 'string)
+
+(defcustom shapeless-blog-secret "testsecret"
+  "The secret password to authenticate."
+  :type 'string)
+
+(defcustom shapeless-blog-token-expiry ""
+  "The expiry date of token."
   :type 'string)
 
 (defcustom shapeless-blog-export-backend 'shapelesshtml
   "The export backend of blog content."
   :type 'string)
 
-(defcustom shapeless-blog-remote-path ""
-  "The remote path of shapeless-blog database."
-  :type 'string)
-
-(defun shapeless-blog-migrate (&optional PATH)
-  "Migrate the sqlite database at PATH.
-
-PATH is a string to the database location.
-
-If PATH is nil, use `shapeless-blog-database-path' as default."
+(defun shapeless-blog-server-healthcheck ()
+  "Check api server status."
   (interactive)
-  (let ((sql (sqlite-open (if (null PATH)
-                              shapeless-blog-database-path
-                            PATH))))
-    (sqlite-execute
-     sql
-     "CREATE TABLE IF NOT EXISTS posts(
-          id INTEGER PRIMARY KEY,
-          title TEXT NOT NULL,
-          filename TEXT NOT NULL,
-          created TEXT NOT NULL,
-          updated TEXT NOT NULL
-      );"
-     )
-    (sqlite-execute
-     sql
-     "CREATE TABLE IF NOT EXISTS tags(
-          post_id INTEGER NOT NULL,
-          tag TEXT
-      );"
-     )))
+  (request (concat shapeless-blog-api-url "/healthcheck")
+    :type "GET"
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (eq (request-response-status-code response) 200)
+                     (message (request-response-data response))
+                   (error (request-response-data response)))))))
 
-(defun shapeless-blog-destroy-tables (&optional PATH)
-  "Drop all the tables in the database at PATH.
-
-PATH is a string to the database location.
-
-If PATH is nil, use `shapeless-blog-database-path' as default."
+(defun shapeless-blog-update-token ()
+  "Update shapeless-blog token."
   (interactive)
-  (let ((sql (sqlite-open (if (null PATH)
-                              shapeless-blog-database-path
-                            PATH))))
-    (sqlite-execute
-     sql
-     "DROP TABLE IF EXISTS posts;")
-    (sqlite-execute
-     sql
-     "DROP TABLE IF EXISTS tags;")))
+  (request (concat shapeless-blog-api-url "/tokens/authentication")
+    :type "POST"
+    :data (json-encode (list `("secret" . ,shapeless-blog-secret)))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 201)
+                     (let ((body (request-response-data response)))
+                       (setq shapeless-blog-token (cdr (assoc 'token body)))
+                       (setq shapeless-blog-token-expiry (cdr (assoc 'expiry body))))
+                   (error (request-response-data response)))
+                 ))))
 
-(defun shapeless-blog-reset-database ()
-  "Reset database."
+;; There are three templates available, "post", "home", "tag".
+(defun shapeless-blog-create-template ()
+  "Send a new template to server."
   (interactive)
-  (shapeless-blog-destroy-tables)
-  (shapeless-blog-migrate))
+  (request (concat shapeless-blog-api-url "/blogging/templates")
+    :type "POST"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :data (json-encode (list `("name" . ,(file-name-sans-extension (buffer-name)))
+                             `("content" . ,(buffer-substring-no-properties
+                                             (point-min) (point-max)))))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 201)
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response))
+                   )))))
+
+(defun shapeless-blog-update-template ()
+  "Update a template to server."
+  (interactive)
+  (request (concat shapeless-blog-api-url
+                   "/blogging/templates/"
+                   (file-name-sans-extension (buffer-name)))
+    :type "PUT"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :data (json-encode (list (cons "content"
+                                   (buffer-substring-no-properties
+                                    (point-min)
+                                    (point-max)))))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 200)
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response)))))))
+
+(defun shapeless-blog-show-template ()
+  "Show a template of input name."
+  (interactive)
+  (request (concat shapeless-blog-api-url
+                   "/blogging/templates/"
+                   (read-string "Template name: "))
+    :type "GET"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 200)
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response)))))))
+
+(defun shapeless-blog-delete-template ()
+  "Delete a template of input name."
+  (interactive)
+  (request (concat shapeless-blog-api-url
+                   "/blogging/templates/"
+                   (read-string "Template name: "))
+    :type "DELETE"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 204)
+                     (message "the template is deleted")
+                   (error "failed to delete template"))))))
 
 (defun shapeless-blog--get-tags ()
   "Get tags for the current post.
@@ -106,14 +154,13 @@ Return a string."
                             (cadr (assoc "UPDATE"
                                          (org-collect-keywords '("update"))))))
 
-(defun shapeless-blog--get-filename ()
-  "Get filename for the current post.
+(defun shapeless-blog--get-file-url ()
+  "Get file url for the current post.
 
 Return a string.
 
-This does not mean the actual filename, but a filename for the
-shapeless-blog database."
-  (s-replace " " "_" (s-downcase (shapeless-blog--get-title))))
+This is for the url field in shapeless-blog database."
+  (shapeless-blog--title-to-file-url (shapeless-blog--get-title)))
 
 (defun shapeless-blog--get-id ()
   "Get id of the current post.
@@ -146,158 +193,128 @@ DATE is a string."
   (replace-regexp "#\\+date:.*" (format "#+date: [%s]" DATE)
                   nil (point-min) (point-max)))
 
-(defun shapeless-blog--title-to-filename (TITLE)
-  "Convert title into filename."
-  (s-replace " " "_" (s-downcase TITLE)))
+(defun shapeless-blog--title-to-file-url (TITLE)
+  "Convert title into file url."
+  (s-replace " " "-" (s-downcase TITLE)))
 
-(defun shapeless-blog--db-insert-tag1 (SQL ID TAG)
-  (sqlite-execute SQL
-                  "INSERT INTO tags(post_id, tag) VALUES (?, ?);"
-                  (list ID TAG)))
+(defun shapeless-blog--get-current-buffer-html-body ()
+  "Return a string of exported html of current buffer.
 
-(defun shapeless-blog--db-insert-tags (SQL ID TAGS)
-  "Add tags of TAGS to post of ID."
-  (mapcar (lambda (tag) (shapeless-blog--db-insert-tag1 SQL ID tag))
-          TAGS))
+Using `shapeless-blog-export-backend'"
+  (org-export-as shapeless-blog-export-backend nil nil t))
 
-(defun shapeless-blog--db-insert-post (SQL TITLE FILENAME CREATED UPDATED)
-  "Insert a new post into database.
-
-Returning the id."
-  (caar (sqlite-select
-         SQL
-         "INSERT INTO posts(title, filename, created, updated) VALUES (?, ?, ?, ?) RETURNING id;"
-         (list TITLE
-               FILENAME
-               CREATED
-               UPDATED))))
-
-(defun shapeless-blog--db-insert-old-post (SQL ID TITLE FILENAME CREATED UPDATED)
-  "Insert an old post into database.
-
-The difference between this and `shapeless-blog--db-insert-post'
-is this function requires an explicit id number, while the other
-one generate one."
-  (sqlite-execute
-   SQL
-   "INSERT INTO posts(id, title, filename, created, updated) VALUES(?,?,?,?,?);"
-   (list ID TITLE FILENAME CREATED UPDATED)))
-
-(defun shapeless-blog--db-update-post (SQL ID TITLE FILENAME CREATED UPDATED)
-  "Update an old post in the database."
-  (sqlite-execute SQL
-                  "UPDATE posts
-SET title = ?, filename = ?, created = ?, updated = ?
-WHERE id = ?"
-                  (list TITLE FILENAME CREATED UPDATED ID)))
-
-(defun shapeless-blog--db-delete-post (SQL ID)
-  "Delete post of ID from the database."
-  (sqlite-execute SQL
-                  "DELETE FROM posts WHERE id = ?;"
-                  (list ID)))
-
-(defun shapeless-blog--db-delete-all-tags (SQL ID)
-  "Delete tags with post_id ID from the database."
-  (sqlite-execute SQL
-                  "DELETE FROM tags WHERE post_id = ?;"
-                  (list ID)))
-
-(defun shapeless-blog--export-to-file (FILENAME)
-  "Export the current buffer into FILENAME in the database."
-  (org-export-to-file shapeless-blog-export-backend
-      (concat shapeless-blog-default-directory
-              (format "/posts/%s.html" FILENAME))
-    t nil nil t))
-
-(defun shapeless-blog--create-new-post ()
-  "Create a new post."
-  (let* ((sql (sqlite-open shapeless-blog-database-path))
-         (now (format-time-string "%Y-%m-%d %H:%M"))
-         (title (shapeless-blog--get-title))
-         (filename (shapeless-blog--title-to-filename title))
-         (tags (shapeless-blog--get-tags))
-         (id (shapeless-blog--db-insert-post sql title filename now now)))
-    (shapeless-blog--edit-id id)
-    (shapeless-blog--edit-create-date now)
-    (shapeless-blog--edit-update-date now)
-    (shapeless-blog--db-insert-tags sql id tags)
-    (shapeless-blog--export-to-file filename)
-    ))
-
-(defun shapeless-blog--update-old-post ()
-  "Update an old post."
-  (let* ((sql (sqlite-open shapeless-blog-database-path))
-         (created (shapeless-blog--get-create-date))
-         (now (format-time-string "%Y-%m-%d %H:%M"))
-         (title (shapeless-blog--get-title))
-         (filename (shapeless-blog--title-to-filename title))
-         (id (shapeless-blog--get-id))
-         (tags (shapeless-blog--get-tags)))
-    (shapeless-blog--edit-update-date now)
-    (shapeless-blog--db-delete-all-tags sql id)
-    (shapeless-blog--db-update-post sql id title filename created now)
-    (shapeless-blog--db-insert-tags sql id tags)
-    ;; In some rare cases of editing the title will result in a
-    ;; redundant html file in the database. Manual deletion is
-    ;; required.
-    (shapeless-blog--export-to-file filename)
-    ))
-
-(defun shapeless-blog-create-old-post ()
-  "Create an old post."
+(defun shapeless-blog-create-post ()
+  "Create a new post to server"
   (interactive)
-  (let* ((sql (sqlite-open shapeless-blog-database-path))
-         (created (shapeless-blog--get-create-date))
-         (updated (shapeless-blog--get-update-date))
-         (title (shapeless-blog--get-title))
-         (filename (shapeless-blog--title-to-filename title))
-         (id (shapeless-blog--get-id))
-         (tags (shapeless-blog--get-tags)))
-    (shapeless-blog--db-delete-all-tags sql id)
-    (shapeless-blog--db-insert-old-post sql id title filename created updated)
-    (shapeless-blog--db-insert-tags sql id tags)
-    ;; In some rare cases of editing the title will result in a
-    ;; redundant html file in the database. Manual deletion is
-    ;; required.
-    (shapeless-blog--export-to-file filename)
-    ))
+  (request (concat shapeless-blog-api-url
+                   "/blogging/posts")
+    :type "POST"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :parser 'json-read
+    :data (json-encode
+           (list (cons "title" (shapeless-blog--get-title))
+                 (cons "url" (shapeless-blog--get-file-url))
+                 (cons "tags" (shapeless-blog--get-tags))
+                 (cons "content" (shapeless-blog--get-current-buffer-html-body))
+                 (cons "create_at" (shapeless-blog--get-create-date))
+                 (cons "update_at" (shapeless-blog--get-update-date))))
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 201)
+                     (progn
+                       (shapeless-blog--edit-id
+                        (cdr (assoc 'id
+                                    (request-response-data response))))
+                       (message "created post"))
+                   (error "%s" (request-response-data response)))))))
 
-(defun shapeless-blog-modify-old-post ()
-  "Modify an old post without changing the updated time."
+(defun shapeless-blog-update-post ()
+  "Update the post of current buffer."
   (interactive)
-  (let* ((sql (sqlite-open shapeless-blog-database-path))
-         (created (shapeless-blog--get-create-date))
-         (updated (shapeless-blog--get-update-date))
-         (title (shapeless-blog--get-title))
-         (filename (shapeless-blog--title-to-filename title))
-         (id (shapeless-blog--get-id))
-         (tags (shapeless-blog--get-tags)))
-    (shapeless-blog--db-delete-all-tags sql id)
-    (shapeless-blog--db-update-post sql id title filename created updated)
-    (shapeless-blog--db-insert-tags sql id tags)
-    ;; In some rare cases of editing the title will result in a
-    ;; redundant html file in the database. Manual deletion is
-    ;; required.
-    (shapeless-blog--export-to-file filename)
-    ))
+  (request (concat shapeless-blog-api-url
+                   "/blogging/posts/id/"
+                   (format "%d" (shapeless-blog--get-id)))
+    :type "PUT"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :data (json-encode
+           (list (cons "title" (shapeless-blog--get-title))
+                 (cons "url" (shapeless-blog--get-file-url))
+                 (cons "tags" (shapeless-blog--get-tags))
+                 (cons "content" (shapeless-blog--get-current-buffer-html-body))
+                 (cons "create_at" (shapeless-blog--get-create-date))
+                 (cons "update_at" (shapeless-blog--get-update-date))))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 200)
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response)))))))
 
 (defun shapeless-blog-create-or-update-post ()
-  "Create or update the current buffer.
+  "Create or update the current buffer as a blog post.
 
-If #+id: is empty, create a new post, otherwise update the post."
+If id is nil, call `shapeless-blog-create-post'. Otherwise call
+`shapeless-blog-update-post'.
+
+This function will also change the date to now."
   (interactive)
-  (if (null (shapeless-blog--get-id))
-      (shapeless-blog--create-new-post)
-    (shapeless-blog--update-old-post)))
+  (if (eq (shapeless-blog--get-id) nil)
+      (progn
+        (shapeless-blog--edit-create-date (format-time-string "%Y-%m-%d"))
+        (shapeless-blog--edit-update-date (format-time-string "%Y-%m-%d"))
+        (shapeless-blog-create-post))
+    (progn
+      (shapeless-blog--edit-update-date (format-time-string "%Y-%m-%d"))
+      (shapeless-blog-update-post))))
 
-(defun shapeless-blog-sync ()
-  "Sync with the remote path using 'rsync'."
+(defun shapeless-blog-show-post-with-id ()
+  "Show the post of input id."
   (interactive)
-  (async-shell-command (format "rsync -urv --delete-after %s %s"
-                               shapeless-blog-default-directory
-                               shapeless-blog-remote-path)
-                       "*shapeless-blog-rsync*"))
+  (request (concat shapeless-blog-api-url
+                   "/blogging/posts/id/"
+                   (read-string "ID: "))
+    :type "GET"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 200)
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response)))))))
 
-(provide 'shapeless-blog)
-;;; shapeless-blog.el ends here
+(defun shapeless-blog-show-post-with-url ()
+  "Show the post of input id."
+  (interactive)
+  (request (concat shapeless-blog-api-url
+                   "/blogging/posts/"
+                   (read-string "URL: "))
+    :type "GET"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :parser 'json-read
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 200)
+                     (message "%s" (request-response-data response))
+                   (error "%s" (request-response-data response)))))))
+
+(defun shapeless-blog-delete-post ()
+  "Delete a post of input id."
+  (interactive)
+  (request (concat shapeless-blog-api-url
+                   "/blogging/posts/id/"
+                   (read-string "ID: "))
+    :type "DELETE"
+    :headers `(("Content-Type" . "application/json")
+               ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
+    :complete (cl-function
+               (lambda (&key response &allow-other-keys)
+                 (if (= (request-response-status-code response) 204)
+                     (message "post deleted")
+                   (error "failed to delete post"))))))
+
+(provide 'shapeless-blog-new)
+;;; shapeless-blog-new.el ends here
