@@ -53,8 +53,9 @@
                  (if (= (request-response-status-code response) 201)
                      (let ((body (request-response-data response)))
                        (setq shapeless-blog-token (cdr (assoc 'token body)))
-                       (setq shapeless-blog-token-expiry (cdr (assoc 'expiry body))))
-                   (error (request-response-data response)))
+                       (setq shapeless-blog-token-expiry (cdr (assoc 'expiry body)))
+                       (message "updated token"))
+                   (error "%s" (request-response-data response)))
                  ))))
 
 ;; There are three templates available, "post", "home", "tag".
@@ -93,7 +94,7 @@
     :complete (cl-function
                (lambda (&key response &allow-other-keys)
                  (if (= (request-response-status-code response) 200)
-                     (message "%s" (request-response-data response))
+                     (message "updated template")
                    (error "%s" (request-response-data response)))))))
 
 (defun shapeless-blog-show-template ()
@@ -253,7 +254,7 @@ Using `shapeless-blog-export-backend'"
     :complete (cl-function
                (lambda (&key response &allow-other-keys)
                  (if (= (request-response-status-code response) 200)
-                     (message "%s" (request-response-data response))
+                     (message "updated post")
                    (error "%s" (request-response-data response)))))))
 
 (defun shapeless-blog-create-or-update-post ()
@@ -264,7 +265,7 @@ If id is nil, call `shapeless-blog-create-post'. Otherwise call
 
 This function will also change the date to now."
   (interactive)
-  (if (eq (shapeless-blog--get-id) nil)
+  (if (eq (shapeless-blog--get-id) 0)
       (progn
         (shapeless-blog--edit-create-date (format-time-string "%Y-%m-%d"))
         (shapeless-blog--edit-update-date (format-time-string "%Y-%m-%d"))
