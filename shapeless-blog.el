@@ -1,4 +1,4 @@
-;;; shapeless-blog-new.el --- Emacs interface for shapeless-blog -*- lexical-binding: t -*-
+;;; shapeless-blog.el --- Emacs interface for shapeless-blog -*- lexical-binding: t -*-
 
 ;;; Commentary:
 
@@ -321,5 +321,5 @@ This function will also change the date to now."
                      (message "post deleted")
                    (error "failed to delete post"))))))
 
-(provide 'shapeless-blog-new)
-;;; shapeless-blog-new.el ends here
+(provide 'shapeless-blog)
+;;; shapeless-blog.el ends here
