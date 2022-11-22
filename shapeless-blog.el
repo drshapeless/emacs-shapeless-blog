@@ -272,7 +272,8 @@ This function will also change the date to now."
         (shapeless-blog-create-post))
     (progn
       (shapeless-blog--edit-update-date (format-time-string "%Y-%m-%d"))
-      (shapeless-blog-update-post))))
+      (shapeless-blog-update-post)))
+  (save-buffer))
 
 (defun shapeless-blog-show-post-with-id ()
   "Show the post of input id."
