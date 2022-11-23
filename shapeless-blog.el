@@ -202,11 +202,32 @@ DATE is a string."
   "Convert title into file url."
   (s-replace " " "-" (s-downcase TITLE)))
 
+(defun shapeless-blog--get-preview ()
+  "Return a string of the preview of the current blog."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((preview-start (- (re-search-forward "^[^[:punct:]\n]") 1))
+          (preview-end   (- (re-search-forward "^*") 3)))
+      (buffer-substring-no-properties preview-start preview-end))))
+
 (defun shapeless-blog--get-current-buffer-html-body ()
   "Return a string of exported html of current buffer.
 
 Using `shapeless-blog-export-backend'"
   (org-export-as shapeless-blog-export-backend nil nil t))
+
+(defun shapeless-blog--get-current-buffer-json ()
+  "Return a json format of the current blog post.
+
+This json is for communicating with the shapeless-blog api."
+  (json-encode
+           (list (cons "title" (shapeless-blog--get-title))
+                 (cons "url" (shapeless-blog--get-file-url))
+                 (cons "preview" (shapeless-blog--get-preview))
+                 (cons "tags" (shapeless-blog--get-tags))
+                 (cons "content" (shapeless-blog--get-current-buffer-html-body))
+                 (cons "create_at" (shapeless-blog--get-create-date))
+                 (cons "update_at" (shapeless-blog--get-update-date)))))
 
 (defun shapeless-blog-create-post ()
   "Create a new post to server"
@@ -217,13 +238,7 @@ Using `shapeless-blog-export-backend'"
     :headers `(("Content-Type" . "application/json")
                ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
     :parser 'json-read
-    :data (json-encode
-           (list (cons "title" (shapeless-blog--get-title))
-                 (cons "url" (shapeless-blog--get-file-url))
-                 (cons "tags" (shapeless-blog--get-tags))
-                 (cons "content" (shapeless-blog--get-current-buffer-html-body))
-                 (cons "create_at" (shapeless-blog--get-create-date))
-                 (cons "update_at" (shapeless-blog--get-update-date))))
+    :data (shapeless-blog--get-current-buffer-json)
     :complete (cl-function
                (lambda (&key response &allow-other-keys)
                  (if (= (request-response-status-code response) 201)
@@ -243,13 +258,7 @@ Using `shapeless-blog-export-backend'"
     :type "PUT"
     :headers `(("Content-Type" . "application/json")
                ("Authorization" . ,(concat "Bearer " shapeless-blog-token)))
-    :data (json-encode
-           (list (cons "title" (shapeless-blog--get-title))
-                 (cons "url" (shapeless-blog--get-file-url))
-                 (cons "tags" (shapeless-blog--get-tags))
-                 (cons "content" (shapeless-blog--get-current-buffer-html-body))
-                 (cons "create_at" (shapeless-blog--get-create-date))
-                 (cons "update_at" (shapeless-blog--get-update-date))))
+    :data (shapeless-blog--get-current-buffer-json)
     :parser 'json-read
     :complete (cl-function
                (lambda (&key response &allow-other-keys)
@@ -263,7 +272,7 @@ Using `shapeless-blog-export-backend'"
 If id is nil, call `shapeless-blog-create-post'. Otherwise call
 `shapeless-blog-update-post'.
 
-This function will also change the date to now."
+This function will also change the date to current time."
   (interactive)
   (if (eq (shapeless-blog--get-id) 0)
       (progn
